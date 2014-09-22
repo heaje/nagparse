@@ -19,9 +19,17 @@
 			"contacts" => true,
 			"contact_groups" => true
 		);
+		private static $memberParams = array(
+			"host_name" => true,
+			"hostgroup_name" => true,
+		);
 
 		public function __construct($params = null){
 			parent::__construct(self::NAG_OBJ_TYPE, $params, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);
+		}
+		
+		public function inheritParam($paramName, $value){
+			parent::inheritParam($paramName, $value, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);
 		}
 
 		public function setParam($paramName, $value){
@@ -38,6 +46,50 @@
 
 		public function getEventHandler(){
 			return $this->convertStringListToArray($this->getParam("event_handler"), "!");
+		}
+
+		public function addMember($memberName, $isHostgroup = false){
+			$param = ($isHostgroup) ? 'hostgroup_name' : 'host_name';
+			if(!in_array($memberName, $this->params[$param])){
+				$this->params[$param][] = $memberName;
+			}
+		}
+
+		public function hasMember($memberName, $isHostgroup = false){
+			$param = ($isHostgroup) ? 'hostgroup_name' : 'host_name';
+			if(isset($this->params[$param])){
+				return in_array($memberName, $this->params[$param]);
+			}
+			else{
+				return false;
+			}
+		}
+
+		public function hasMembers(){
+			$return = false;
+			foreach(array_keys(self::$memberParams) as $memberParam){
+				if(isset($this->params[$memberParam]) && count($this->params[$memberParam]) > 0){
+					$return = true;
+				}
+			}
+
+			return $return;
+		}
+
+		public function removeMember($memberName, $isHostgroup = false){
+			$param = ($isHostgroup) ? 'hostgroup_name' : 'host_name';
+			$memberKey = array_search($memberName, $this->params[$param]);
+			if($memberKey !== false){
+				unset($this->params[$param][$memberKey]);
+			}
+		}
+
+		public function getMembers(){
+			$members = array();
+			foreach(array_keys(self::$memberParams) as $memParam){
+				$members[$memParam] = isset($this->params[$memParam]) ? $this->params[$memParam] : array();
+			}
+			return $members;
 		}
 
 	}

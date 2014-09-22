@@ -1,17 +1,5 @@
 <?php
 
-	// Import all the nagios object classes
-	define(NAGIOS_CLASS_DIR, 'lib/objectClasses');
-	require('lib/nagObjectInterface.php');
-	$nagiosClasses = scandir(NAGIOS_CLASS_DIR);
-
-	foreach($nagiosClasses as $class){
-		if($class == '.' || $class == '..'){
-			continue;
-		}
-		include(NAGIOS_CLASS_DIR.'/'.$class);
-	}
-
 	/**
 	 * A generic class to define Nagios objects.  This is used to set parameters and perform
 	 * basic generic tasks.
@@ -29,12 +17,16 @@
 		protected $params = array();
 		protected $isTemplate = false;
 		protected $isRegistered = true;
+		protected static $commonListParams = array('use' => true);
 
 		protected function __construct($type, $params = null, $objNameParam, $stringListParams){
 			$this->type = $type;
+			if(is_null($objNameParam)){
+				$this->name = spl_object_hash($this);
+			}
 
 			if(isset($params) && is_array($params)){
-				$this->replaceParams($newParamArray, $objNameParam, $stringListParams);
+				$this->replaceParams($params, $objNameParam, $stringListParams);
 			}
 		}
 
@@ -75,7 +67,7 @@
 		 * @return mixed 
 		 */
 		public function getParam($paramName){
-			return $this->params[$paramName];
+			return (isset($this->params[$paramName])) ? $this->params[$paramName] : null;
 		}
 
 		/**
@@ -100,6 +92,61 @@
 		 */
 		public function isRegistered($isRegistered = true){
 			return $this->isRegistered = $isRegistered;
+		}
+
+		/**
+		 * Get the object as a Nagios configuration block
+		 * @param integer $keyValuePadding The amount of space to pad parameters
+		 * @return string
+		 */
+		public function toString($keyValuePadding = 40, $newLine = true){
+			$stringArray = array(
+				'define ' . $this->type . '{'
+			);
+			foreach($this->params as $key => $value){
+				$print = true;
+				if(is_array($value)){
+					if(count($value) > 0){
+						$value = $this->convertArrayToStringList($value, ',');
+						$print = true;
+					}
+					else{
+						$print = false;
+					}
+				}
+
+				if($print){
+					$stringArray[] = "\t" . str_pad($key, $keyValuePadding) . ' ' . $value;
+				}
+			}
+			$stringArray[] = ($newLine) ? "}\n" : '}';
+
+			return implode("\n", $stringArray);
+		}
+
+		protected function inheritParam($paramName, $newValue, $objNameParam, $stringListParams){
+			$currentValue = $this->getParam($paramName);
+			if(!isset($currentValue) || $currentValue == '' || (is_array($currentValue) && count($currentValue) == 0)){
+				$this->setParam($paramName, $newValue, $objNameParam, $stringListParams);
+			}
+			elseif(array_key_exists($paramName, $stringListParams)){
+				$append = (preg_match('/^\+/', $currentValue[0]) === 1) ? true : false;
+
+				if($append){
+					if(!is_array($newValue)){
+						$newValue = $this->convertStringListToArray($newValue);
+					}
+					
+					// Now that we've inherited things, get rid of the appending character
+					$mergedValues = array_merge($currentValue, $newValue);
+					$this->setParam($paramName, preg_replace('/^\+/', '', $mergedValues));
+				}
+				
+			}
+		}
+
+		public function deleteParam($paramName){
+			unset($this->params[$paramName]);
 		}
 
 		/**
@@ -129,42 +176,76 @@
 		 * @param array $stringListParams The parameters that can be comma-delimited lists
 		 */
 		protected function setParam($paramName, $value, $objNameParam, $stringListParams){
-			/*
-			 * These two trim() commands cause the parsing and flattening to take a full
-			 * one second longer.  I don't know how to fix these parameters without using
-			 * trim() though.
-			 */
+			$appendValue = false;
+
 			$paramName = trim($paramName);
+
 			if(is_string($value)){
 				$value = trim($value);
+
+				if($value == 'null'){
+					if(isset($this->params[$paramName])){
+						unset($this->params[$paramName]);
+					}
+					return;
+				}
+				elseif($value[0] == "+"){
+					$appendValue = true;
+					$value = substr($value, 1);
+				}
 			}
 
 			// Set the name of this object if the given parameter is the object name parameter
 			if($paramName == $objNameParam){
 				$this->name = $value;
 			}
+
 			/*
 			 * Set the name for this template and mark it as a template if the given parameter
 			 * is the template name parameter
 			 */
-			elseif($paramName == self::NAG_OBJ_TEMPLATE_NAME_PARAM){
+			if($paramName == self::NAG_OBJ_TEMPLATE_NAME_PARAM){
 				$this->templateName = $value;
 				$this->isTemplate(true);
 			}
+
 			/*
 			 * Mark the host as not registered if the given parameter is the registered parameter
 			 * and it is set to zero
 			 */
-			elseif($paramName == self::NAG_OBJ_REGISTER_KEY && $value == 0){
+			if($paramName == self::NAG_OBJ_REGISTER_KEY && $value == 0){
 				$this->isRegistered(false);
 			}
 
 			// Only convert a comma-delimited list into an array if it isn't already an array
-			if(array_key_exists($paramName, $stringListParams) && !is_array($value)){
-				$value = $this->convertStringListToArray($value);
+			if(array_key_exists($paramName, $stringListParams) || array_key_exists($paramName, self::$commonListParams)){
+				if(!is_array($value)){
+					$valueArray = $this->convertStringListToArray($value);
+					if(isset($this->params[$paramName])){
+						$value = ($appendValue) ? array_unique(array_merge($this->params[$paramName], $valueArray)) : array_unique($valueArray);
+					}
+					else{
+						$value = $valueArray;
+					}
+				}
 			}
 
-			return $this->params[$paramName] = $value;
+			$this->params[$paramName] = $value;
+		}
+
+		/**
+		 * Takes the given array and creates an string from it using the given delimiter
+		 * @param string $array The array from which to create an string
+		 * @param string $delimiter The string on which to implode the array into an string
+		 * @return array The imploded array as a string
+		 * @throws BadMethodCallException
+		 */
+		protected function convertArrayToStringList($array, $delimiter = ','){
+			if(!is_array($array)){
+				return $array;
+			}
+
+			return implode($delimiter, $array);
 		}
 
 		/**
@@ -179,8 +260,11 @@
 				return $string;
 			}
 
-			$string = preg_replace('/\s*'.$delimiter.'\s*/', $delimiter, $string);
-			return explode($delimiter, $string);
+			$string = preg_replace('/\s*' . $delimiter . '\s*/', $delimiter, $string);
+			$array = preg_split('/' . $delimiter . '/', $string, null, PREG_SPLIT_NO_EMPTY);
+			return $array;
+			//$string = preg_replace('/'.$delimiter.$delimiter.'+/', $delimiter, $string);
+			//return explode($delimiter, $string);
 		}
 
 	}

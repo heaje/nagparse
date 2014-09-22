@@ -1,10 +1,8 @@
 <?php
 
-	require('nagObject.class.php');
-
 	/**
 	 * A class to parse through the given nagios configuration file(s) and then
-	 * flatten out the config if required
+	 * flatten out the config if required.
 	 * 
 	 * @author Corey Shaw <corey.shaw@gmail.com>
 	 */
@@ -31,6 +29,7 @@
 		 * @throws BadMethodCallException
 		 * @throws OutOfBoundsException
 		 * @throws RuntimeException
+		 * @return array An associative array of basic configuration and templates
 		 */
 		public function parseConfigFile($parseFile){
 			if(!is_string($parseFile)){
@@ -55,11 +54,7 @@
 
 				/*
 				 * An object parameter and its value.  This only matches if a 'define'
-				 * section was already found.  
-				 * There must be a better regex to use here that will ignore all white space
-				 * at the end.  If it can be discovered, the trim() commands in nagObject.class.php
-				 * in the setParam() method could be removed.  That would save a full one second off
-				 * of the total run time.
+				 * section was already found.
 				 */
 				elseif($inObject && preg_match('/^\s*(\S+)\s+(.+)/', $line, $match) === 1){
 					$key = $match[1];
@@ -79,7 +74,7 @@
 					if(!$inObject){
 						$inObject = true;
 						$curObjectType = strtolower($match[1]);
-						$classType = 'nag'.ucfirst($curObjectType);
+						$classType = 'nag' . ucfirst($curObjectType);
 						$curObj = new $classType();
 					}
 					else{
@@ -99,21 +94,21 @@
 							$this->rawTemplates[$curObjectType][$templateName] = $curObj;
 						}
 
-
-						if($curObj->getIsRegistered()){
-							/*
-							 * Service definitions are special cases because service_description
-							 * does NOT have to be unique.  As a result, it is entirely possible
-							 * for multiple services to have the same "name".  Services are indexed
-							 * numerically for this reason.
-							 */
-							if($curObjectType == "service" || $curObjectType == "servicedependency"){
-								$this->rawConfig[$curObjectType][] = $curObj;
-							}
-							else{
-								$this->rawConfig[$curObjectType][$objName] = $curObj;
-							}
+						//if($curObj->getIsRegistered()){
+						/*
+						 * Service definitions are special cases because service_description
+						 * does NOT have to be unique.  As a result, it is entirely possible
+						 * for multiple services to have the same "name".  Services are indexed
+						 * by an object hash for this reason.
+						 */
+						if($curObjectType == "service"){
+							$objHash = spl_object_hash($curObj);
+							$this->rawConfig[$curObjectType][$objHash] = $curObj;
 						}
+						else{
+							$this->rawConfig[$curObjectType][$objName] = $curObj;
+						}
+						//	}
 					}
 					else{
 						throw new RuntimeException('Found closing \'}\' outside of an object!');
@@ -142,7 +137,7 @@
 									if($filename === '.' || $filename === '..'){
 										continue;
 									}
-									$fullPath = $value.'/'.$filename;
+									$fullPath = $value . '/' . $filename;
 									$fileExt = pathinfo($fullPath, PATHINFO_EXTENSION);
 									if($fileExt === 'cfg'){
 										$this->ParseConfigFile($fullPath);
@@ -153,7 +148,7 @@
 								}
 							}
 							else{
-								throw new OutOfBoundsException($value.' does not exist!');
+								throw new OutOfBoundsException($value . ' does not exist!');
 							}
 							break;
 						// All other configuration options only found in nagios.cfg
@@ -168,6 +163,12 @@
 					continue;
 				}
 			}
+
+			return array(
+				'global_config' => $this->globalConfig,
+				'object_config' => $this->rawConfig,
+				'template_config' => $this->rawTemplates,
+			);
 		}
 
 		/**
@@ -175,27 +176,43 @@
 		 * their configuration.
 		 * @return array An associative array of all objects with their flattened config
 		 */
-		public function flattenConfig(){
+		public function flattenConfig($configToFlatten = null, $hostsToFlatten = null){
 			$flatConfig = array();
+			if(is_null($configToFlatten)){
+				$configToFlatten = $this->rawConfig;
+			}
+
+			if(is_array($hostsToFlatten) && count($hostsToFlatten) > 0){
+				$newHostFlattenConfig = array();
+				foreach($hostsToFlatten as $hostname){
+					if(isset($configToFlatten['host'][$hostname])){
+						$newHostFlattenConfig[$hostname] = $configToFlatten['host'][$hostname];
+					}
+				}
+				$configToFlatten['host'] = $newHostFlattenConfig;
+			}
+
 
 			// Parse through all object types in the rawConfig array
-			foreach(array_keys($this->rawConfig) as $objType){
-				$evalArray = $this->rawConfig[$objType];
+			foreach(array_keys($configToFlatten) as $objType){
+				$evalArray = $configToFlatten[$objType];
 
 				foreach($evalArray as $objName => $nagObj){
+					$nagObj = clone $nagObj;
+
 					// Inherit parameters from templates if they are used
-					$useName = $nagObj->getParam(self::NAG_TEMPLATE_USE_KEY);
-					$deps = (isset($useName)) ? $this->evalDependency($objType, $useName) : false;
-					$newParams = ($deps !== false) ? array_merge($deps, $nagObj->getParams()) : $nagObj->getParams();
+					$deps = $this->evalDependency($objType, $nagObj->getParam(self::NAG_TEMPLATE_USE_KEY));
+					$deps = $this->removeUnusedParams($deps);
+					foreach($deps as $param => $inherVal){
+						$nagObj->inheritParam($param, $inherVal);
+					}
 
 					/*
 					 * Remove parameters that don't matter anymore.  These are parameters
 					 * that should not be inherited from templates and don't matter after
 					 * the configuration has been flattened.
 					 */
-					$newParams = $this->removeUnusedParams($newParams);
-
-					// Replace the objects current configuration with the flattened one.
+					$newParams = $this->removeUnusedParams($nagObj->getParams());
 					$nagObj->replaceParams($newParams);
 
 					// Add the flattened template (if it is one) to an array
@@ -211,17 +228,18 @@
 				}
 			}
 
+			$this->flatConfig = $flatConfig;
 			return $flatConfig;
 		}
 
 		/**
 		 * Parses the entire flattened config array and replaces all $USERx$ macros
 		 * with their actual values
-		 * @param type $flattenedConfig A Nagios flattened configuration from the flattenConfig() method.
+		 * @param array $flattenedConfig A Nagios flattened configuration from the flattenConfig() method.
 		 * @return array Returns the modified flattened config
 		 * @throws BadMethodCallException
 		 */
-		public function parseMacros($flattenedConfig){
+		public function parseUserMacros($flattenedConfig){
 			if(!is_array($flattenedConfig)){
 				throw new BadMethodCallException("Param #1 must be an array");
 			}
@@ -232,9 +250,23 @@
 					foreach($objParams as $key => $value){
 						$match = array();
 						if(is_string($value)){
-							if(preg_match_all('/(\$USER\d+\$)/', $value, $match) > 0){
+							//$macroCount = preg_match_all('/(\$[A-Z0-9]+\$)/', $value, $match);
+							$macroCount = preg_match_all('/(\$USER\d+\$)/', $value, $match);
+							if($macroCount !== false && $macroCount > 0){
 								foreach($match[0] as $macroName){
+									//if(substr($macroName, 1, 4) == "USER"){
 									$value = str_replace($macroName, $this->globalConfig[$macroName], $value);
+									//}
+									/* else if($parseBuiltinMacros && isset($macroToParamMap[$macroName])){
+									  $value = str_replace($macroName, $curObj->getParam($macroToParamMap[$macroName]), $value);
+									  }
+									  else if($parseBuiltinMacros && substr($macroName, 0, 2) == '$_'){
+									  foreach(array_keys($customMacros) as $customMacroName){
+									  if(strpos($macroName, $customMacroName) !== false){
+									  $parsedMacroName = '_'.substr($macroName, strlen($customMacroName));
+									  }
+									  }
+									  } */
 								}
 								$curObj->setParam($key, $value);
 							}
@@ -268,30 +300,57 @@
 		 * @return mixed Returns an array of template parameters on success.  Returns FALSE
 		 * if the template cannot be found.
 		 */
-		private function evalDependency($objType, $useName){
-			/*
-			 * Check to see if the template in question has already been flattened.
-			 * If so, just return the config right away.
-			 */
-			if(isset($this->flatTemplates[$objType][$useName])){
-				return $this->flatTemplates[$objType][$useName]->getParams();
+		private function evalDependency($objType, $useNameArray){
+			if(!isset($useNameArray)){
+				return array();
+			}
+			if(is_string($useNameArray)){
+				$useNameArray = array($useNameArray);
 			}
 
-			// Return false if the template name given doesn't exist
-			if(!isset($this->rawTemplates[$objType][$useName])){
-				return false;
+			$inheritedParams = array();
+			foreach($useNameArray as $useName){
+				/*
+				 * Check to see if the template in question has already been flattened.
+				 * If so, just return the config right away.
+				 */
+				if(isset($this->flatTemplates[$objType][$useName])){
+					/*
+					 * We inherit multiple templates things in the same manner as Nagios.
+					 * The first template to specify a value wins and that value is then
+					 * ignored in the remaining templates (unless they append values).
+					 */
+					return $this->flatTemplates[$objType][$useName]->getParams();
+				}
+				else if(!isset($this->rawTemplates[$objType][$useName])){
+					// Return an empty array if the template name given doesn't exist
+					return array();
+				}
+				$nagTemplateObj = clone $this->rawTemplates[$objType][$useName];
+				$nagTemplateObj->deleteParam('register');
+
+				/*
+				 * If the template in question also inherits stuff from another template, recursively
+				 * follow the path to get all dependencies.
+				 */
+				$nagTemplateUseName = $nagTemplateObj->getParam(self::NAG_TEMPLATE_USE_KEY);
+
+				if(isset($nagTemplateUseName)){
+					$deps = array();
+					foreach($nagTemplateUseName as $curUse){
+						$deps = $this->evalDependency($objType, $curUse);
+						foreach($deps as $param => $inherVal){
+							$nagTemplateObj->inheritParam($param, $inherVal);
+						}
+					}
+				}
+				else{
+					$deps = false;
+				}
+				//$deps = (isset($nagTemplateUseName)) ? $this->evalDependency($objType, $nagTemplateUseName) : false;
+				//$newParams = ($deps !== false) ? array_merge($deps, $nagTemplateObj->getParams()) : $nagTemplateObj->getParams();
+				//$nagTemplateObj->replaceParams($newParams);
 			}
-			$nagTemplateObj = $this->rawTemplates[$objType][$useName];
-
-			/*
-			 * If the template in question also inherits stuff from another template, recursively
-			 * follow the path to get all dependencies.
-			 */
-			$nagTemplateUseName = $nagTemplateObj->getParam(self::NAG_TEMPLATE_USE_KEY);
-			$deps = (isset($nagTemplateUseName)) ? $this->evalDependency($objType, $nagTemplateUseName) : false;
-			$newParams = ($deps !== false) ? array_merge($deps, $nagTemplateObj->getParams()) : $nagTemplateObj->getParams();
-			$nagTemplateObj->replaceParams($newParams);
-
 			return $nagTemplateObj->getParams();
 		}
 
@@ -301,6 +360,22 @@
 		 */
 		public function getGlobalConfig(){
 			return $this->globalConfig;
+		}
+
+		/**
+		 * Return the raw configuration array
+		 * @return array Returns the raw configuration array
+		 */
+		public function getRawConfig(){
+			return $this->rawConfig;
+		}
+
+		/**
+		 * Return the raw template configuration array
+		 * @return array Returns the raw configuration array
+		 */
+		public function getRawTemplates(){
+			return $this->rawTemplates;
 		}
 
 	}

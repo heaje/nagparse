@@ -1,7 +1,11 @@
 #!/usr/bin/env php
 <?php
-	require('lib/nagParse.class.php');
-	require('lib/parseFunctions.php');
+
+	ini_set('include_path', ini_get('include_path') . PATH_SEPARATOR . dirname(__FILE__) . '/lib');
+	require('baseParse.class.php');
+	require('parseFunctions.php');
+			
+	spl_autoload_register('baseParse::autoload');
 
 	/**
 	 * -f => The configuration file to parse.  Can be passed multiple times.

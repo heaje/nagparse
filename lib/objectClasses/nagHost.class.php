@@ -18,6 +18,10 @@
 			"hostgroups" => true,
 			"parents" => true
 		);
+		
+		public function inheritParam($paramName, $value){
+			parent::inheritParam($paramName, $value, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);
+		}
 
 		public function __construct($params = null){
 			parent::__construct(self::NAG_OBJ_TYPE, $params, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);

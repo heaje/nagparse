@@ -44,6 +44,10 @@
 				}
 			}
 		}
+		
+		public function inheritParam($paramName, $value){
+			parent::inheritParam($paramName, $value, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);
+		}
 
 		/**
 		 * Nagios Timeperiods have a special setParam() method because of their ability
