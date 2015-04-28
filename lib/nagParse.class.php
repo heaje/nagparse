@@ -94,7 +94,6 @@
 							$this->rawTemplates[$curObjectType][$templateName] = $curObj;
 						}
 
-						//if($curObj->getIsRegistered()){
 						/*
 						 * Service definitions are special cases because service_description
 						 * does NOT have to be unique.  As a result, it is entirely possible
@@ -108,7 +107,6 @@
 						else{
 							$this->rawConfig[$curObjectType][$objName] = $curObj;
 						}
-						//	}
 					}
 					else{
 						throw new RuntimeException('Found closing \'}\' outside of an object!');
@@ -230,6 +228,27 @@
 
 			$this->flatConfig = $flatConfig;
 			return $flatConfig;
+		}
+
+		public function getRelationships($flatConfig){
+			$fullRelationships = array();
+			foreach($flatConfig as $type => $objects){
+				foreach($objects as $objName => $obj){
+					foreach($obj->getRelationships() as $relationType => $relations){
+						if(!isset($fullRelationships[$type][$objName][$relationType])){
+							$fullRelationships[$type][$objName][$relationType] = array();
+						}
+						
+						
+						$fullRelationships[$type][$objName][$relationType] = array_merge($fullRelationships[$type][$objName][$relationType], $relations);
+						foreach($relations as $ref){
+							$fullRelationships[$relationType][$ref][$type][] = $objName;
+						}
+					}
+				}
+			}
+
+			return $fullRelationships;
 		}
 
 		/**

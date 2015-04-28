@@ -69,6 +69,9 @@
 			parent::replaceParams($newParamArray, self::NAG_OBJ_NAME_PARAM, self::$stringListParams);
 		}
 
+		public function getRelationships(){
+			return parent::getRelationships(array());
+		}
 	}
 
 ?>

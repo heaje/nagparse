@@ -13,5 +13,7 @@
 		public function __construct($params = null);
 		
 		public function inheritParam($paramName, $value);
+		
+		public function getRelationships();
 	}
 	

@@ -6,7 +6,7 @@
 	 *
 	 * @author Corey Shaw <corey.shaw@gmail.com>
 	 */
-	class nagobject{
+	abstract class nagobject{
 
 		const NAG_OBJ_TEMPLATE_NAME_PARAM = 'name';
 		const NAG_OBJ_REGISTER_KEY = 'register';
@@ -17,7 +17,35 @@
 		protected $params = array();
 		protected $isTemplate = false;
 		protected $isRegistered = true;
-		protected static $commonListParams = array('use' => true);
+		
+		private static $commonListParams = array('use' => true);
+		
+		private static $paramNameToTypeMap= array(
+			'check_command' => 'command',
+			'check_period' => 'timeperiod',
+			'contact_groups' => 'contactgroup',
+			'contactgroup_members' => 'contactgroup',
+			'contactgroups' => 'contactgroup',
+			'contacts' => 'contact',
+			'dependency_period' => 'timeperiod',
+			'dependent_host_name' => 'host',
+			'dependent_hostgroup_name' => 'hostgroup',
+			'dependent_servicegroup_name' => 'servicegroup',
+			'escalation_period' => 'timeperiod',
+			'event_handler' => 'command',
+			'host_name' => 'host',
+			'host_notification_commands' => 'command',
+			'host_notification_period' => 'timeperiod',
+			'hostgroup_members' => 'hostgroup',
+			'hostgroup_name' => 'hostgroup',
+			'hostgroups' => 'hostgroup',
+			'notification_period' => 'timeperiod',
+			'parents' => 'host',
+			'service_notification_commands' => 'command',
+			'service_notification_period' => 'timeperiod',
+			'servicegroup_members' => 'servicegroup',
+			'servicegroup_name' => 'servicegroup',
+		);
 
 		protected function __construct($type, $params = null, $objNameParam, $stringListParams){
 			$this->type = $type;
@@ -47,7 +75,7 @@
 		}
 
 		/**
-		 * Return true if this object is a template, false otherwise
+		 * Return true if this object is a template, false otherwise.
 		 * @return boolean 
 		 */
 		public function getIsTemplate(){
@@ -55,7 +83,7 @@
 		}
 
 		/**
-		 * Return true if this object is registered, false otherwise
+		 * Return true if this object is registered, false otherwise.
 		 * @return boolean 
 		 */
 		public function getIsRegistered(){
@@ -63,7 +91,8 @@
 		}
 
 		/**
-		 * Return the requested object parameter
+		 * Return the requested object parameter.  If the parameter does not exist,
+		 * return null.
 		 * @return mixed 
 		 */
 		public function getParam($paramName){
@@ -123,6 +152,28 @@
 
 			return implode("\n", $stringArray);
 		}
+		
+		public function getRelationships($relationshipParams){
+			$relationships = array();
+			foreach(array_keys($relationshipParams) as $param){
+				$paramType = key_exists($param, self::$paramNameToTypeMap) ? self::$paramNameToTypeMap[$param] : $param;
+				
+				$paramValue = $this->getParam($param);
+				if(isset($paramValue)){
+					if(is_array($paramValue)){
+						foreach($paramValue as $value){
+							$relationships[$paramType][] = $value;
+						}
+					}
+					else{
+						$relationships[$paramType][] = $paramValue;
+					}
+					$relationships[$paramType] = array_unique($relationships[$paramType]);
+				}
+			}
+			
+			return $relationships;
+		}
 
 		protected function inheritParam($paramName, $newValue, $objNameParam, $stringListParams){
 			$currentValue = $this->getParam($paramName);
@@ -144,7 +195,11 @@
 				
 			}
 		}
-
+		
+		/**
+		 * Deletes the given parameter from the Nagios object.
+		 * @param type $paramName
+		 */
 		public function deleteParam($paramName){
 			unset($this->params[$paramName]);
 		}
